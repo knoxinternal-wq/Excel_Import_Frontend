@@ -393,11 +393,12 @@ const PivotVirtualRow = memo(function PivotVirtualRow({
             <div
               key={`${rh.key}-r-${idx}`}
               className={[
-                'min-h-full min-w-0 border-r border-slate-200 px-1.5 py-1.5 text-left text-[10px] font-semibold leading-snug text-slate-700 [overflow-wrap:anywhere] break-words whitespace-normal',
+                'min-h-full min-w-0 border-r border-slate-200 px-1.5 py-1.5 text-left text-[10px] font-semibold leading-snug text-slate-700 overflow-hidden text-ellipsis whitespace-nowrap',
                 isSelectedCell(gridRow, idx) ? 'bg-blue-100' : '',
               ].join(' ')}
               onClick={() => onCellClick(gridRow, idx)}
               role="presentation"
+              title={val || '-'}
             >
               {val || '-'}
             </div>
@@ -407,7 +408,7 @@ const PivotVirtualRow = memo(function PivotVirtualRow({
           <div
             key={`${rh.key}-${d.kind}-${d.colKey}-${d.metricKey}`}
             className={[
-              'min-h-full min-w-0 border-r border-slate-200 bg-white px-1.5 py-1.5 text-right text-[10px] tabular-nums leading-snug [overflow-wrap:anywhere] break-words whitespace-normal',
+              'min-h-full min-w-0 border-r border-slate-200 bg-white px-1.5 py-1.5 text-right text-[10px] tabular-nums leading-snug overflow-hidden text-ellipsis whitespace-nowrap',
               dIdx === descriptors.length - 1 ? 'pr-4 sm:pr-5' : '',
               isSelectedCell(gridRow, rowHeaderFields.length + dIdx) ? 'bg-blue-100' : '',
             ].join(' ')}
@@ -436,11 +437,12 @@ const PivotVirtualRow = memo(function PivotVirtualRow({
           <div
             key={`st-${st.key}-r-${idx}`}
             className={[
-              'min-h-full min-w-0 border-r border-amber-200/60 px-1.5 py-1.5 text-left text-[10px] font-bold leading-snug text-amber-900 [overflow-wrap:anywhere] break-words whitespace-normal',
+              'min-h-full min-w-0 border-r border-amber-200/60 px-1.5 py-1.5 text-left text-[10px] font-bold leading-snug text-amber-900 overflow-hidden text-ellipsis whitespace-nowrap',
               isSelectedCell(gridRow, idx) ? 'bg-blue-100' : '',
             ].join(' ')}
             onClick={() => onCellClick(gridRow, idx)}
             role="presentation"
+            title={val || '-'}
           >
             {val || '-'}
           </div>
@@ -450,7 +452,7 @@ const PivotVirtualRow = memo(function PivotVirtualRow({
         <div
           key={`st-${st.key}-${d.kind}-${d.colKey}-${d.metricKey}`}
           className={[
-            'min-h-full min-w-0 border-r border-amber-200/60 bg-amber-50 px-1.5 py-1.5 text-right text-[10px] font-semibold tabular-nums leading-snug [overflow-wrap:anywhere] break-words whitespace-normal',
+            'min-h-full min-w-0 border-r border-amber-200/60 bg-amber-50 px-1.5 py-1.5 text-right text-[10px] font-semibold tabular-nums leading-snug overflow-hidden text-ellipsis whitespace-nowrap',
             dIdx === descriptors.length - 1 ? 'pr-4 sm:pr-5' : '',
             isSelectedCell(gridRow, rowHeaderFields.length + dIdx) ? 'bg-blue-100' : '',
           ].join(' ')}
@@ -1546,9 +1548,9 @@ export default function PivotReport() {
 
   const columnWidths = useMemo(() => {
     const rowWidths = rowHeaderFields.map((rf, idx) => (
-      widthFromHeaderText(fieldLabel(rf), { min: idx === 0 ? 110 : 96, max: idx === 0 ? 210 : 180, pad: 24 })
+      widthFromHeaderText(fieldLabel(rf), { min: idx === 0 ? 170 : 130, max: idx === 0 ? 320 : 260, pad: 30 })
     ));
-    const valueWidths = descriptorHeader.map((h) => widthFromHeaderText(h, { min: 92, max: 170, pad: 22 }));
+    const valueWidths = descriptorHeader.map((h) => widthFromHeaderText(h, { min: 120, max: 230, pad: 24 }));
     return [...rowWidths, ...valueWidths];
   }, [rowHeaderFields, descriptorHeader]);
   const pivotTableMinWidth = useMemo(
@@ -1924,13 +1926,6 @@ export default function PivotReport() {
                 {exportingPivot ? 'Preparing…' : 'Download Excel'}
               </button>
             </div>
-            {Array.isArray(result?.meta?.warnings) && result.meta.warnings.length > 0 && (
-              <div className="border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-[11px] text-amber-950 space-y-1">
-                {result.meta.warnings.map((w, i) => (
-                  <p key={`pivot-warn-${i}`}>{w}</p>
-                ))}
-              </div>
-            )}
             {filters.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-300 bg-[#f2f2f2] px-3 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-wide text-slate-800">Report filter</span>
@@ -1944,25 +1939,6 @@ export default function PivotReport() {
                     <span className="min-w-0 truncate text-slate-600">{summarizePivotFilter(f)}</span>
                   </span>
                 ))}
-              </div>
-            )}
-            {result?.meta?.bodyPaging?.truncatedAfter && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-[11px] text-amber-950">
-                <span>
-                  Loaded {orderedBodyRows.length.toLocaleString('en-IN')} of{' '}
-                  {result.meta.bodyPaging.totalLines.toLocaleString('en-IN')} body lines. Grand totals are for the full filtered set.
-                  Scroll the pivot body to load {PIVOT_BODY_PAGE_SIZE.toLocaleString('en-IN')} more at a time, or load everything below.
-                </span>
-                <button
-                  type="button"
-                  className="rounded-md border border-amber-600/50 bg-white px-2 py-0.5 font-medium hover:bg-amber-100"
-                  onClick={() => {
-                    setPivotLoadAll(true);
-                    runPivot(true);
-                  }}
-                >
-                  Load all body lines
-                </button>
               </div>
             )}
             <div
