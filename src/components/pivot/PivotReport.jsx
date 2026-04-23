@@ -554,6 +554,7 @@ export default function PivotReport() {
   const [filterOptions, setFilterOptions] = useState({});
   const [filterLoading, setFilterLoading] = useState({});
   const [filterErrorByField, setFilterErrorByField] = useState({});
+  const [expandedFilterIndex, setExpandedFilterIndex] = useState(null);
   /** True after a fetch attempt finished (success or error) for that field. */
   const [filterReady, setFilterReady] = useState({});
   /** One successful fetch per field (even if empty); avoids refetch loops. Use force to reload. */
@@ -577,6 +578,7 @@ export default function PivotReport() {
   const pivotSectionRef = useRef(null);
   const runSeqRef = useRef(0);
   const lastRunKeyRef = useRef('');
+  const inflightRunKeyRef = useRef('');
   const lastLayoutKeyRef = useRef('');
   const lastFilterKeyRef = useRef('');
   const pivotRequestAbortRef = useRef(null);
@@ -592,6 +594,10 @@ export default function PivotReport() {
   const debouncedFiltersPayload = useMemo(
     () => filtersToPayloadArray(debouncedFilters),
     [debouncedFilters],
+  );
+  const activeFilterFields = useMemo(
+    () => [...new Set(filters.map((x) => x?.field).filter(Boolean))],
+    [filters],
   );
   /** Match backend: rows/columns without Values → Count of rows (Excel-style). */
   const valuesForPivot = useMemo(() => {
@@ -816,6 +822,7 @@ export default function PivotReport() {
       subtotalKey,
     });
     if (!force && runKey === lastRunKeyRef.current) return;
+    if (!force && inflightRunKeyRef.current === runKey) return;
     const cacheHit = pivotResponseCacheRef.current.get(runKey);
     if (!force && cacheHit && Date.now() - cacheHit.ts < PIVOT_CLIENT_CACHE_TTL_MS) {
       setResult(cacheHit.data);
@@ -833,6 +840,7 @@ export default function PivotReport() {
     }
     const controller = new AbortController();
     pivotRequestAbortRef.current = controller;
+    inflightRunKeyRef.current = runKey;
     setRunning(true);
     setError(null);
     try {
@@ -868,6 +876,9 @@ export default function PivotReport() {
       if (seq === runSeqRef.current) setRunning(false);
       if (pivotRequestAbortRef.current === controller) {
         pivotRequestAbortRef.current = null;
+      }
+      if (inflightRunKeyRef.current === runKey) {
+        inflightRunKeyRef.current = '';
       }
     }
   }, [rows, columns, valuesForPivot, debouncedFiltersPayload, subtotalFields, pivotLoadAll]);
@@ -995,15 +1006,13 @@ export default function PivotReport() {
       setResult(null);
     }
     lastFilterKeyRef.current = filterKey;
-    // Field-layout changes (rows/columns/values/subtotals/filters) should always fetch
-    // the latest result instead of reusing a stale client cache snapshot.
-    void runPivot(true);
+    // Run once per effective layout/filter payload change; `runPivot` already avoids duplicates.
+    void runPivot();
     return undefined;
   }, [
     rows,
     columns,
     valuesForPivot,
-    debouncedFilters,
     debouncedFiltersPayload,
     subtotalFields,
     loadingFields,
@@ -1016,16 +1025,18 @@ export default function PivotReport() {
     if (loadingFields || running || error || result) return undefined;
     if (!(rows.length > 0 || columns.length > 0 || values.length > 0)) return undefined;
     const t = setTimeout(() => {
-      void runPivot(true);
+      void runPivot();
     }, 120);
     return () => clearTimeout(t);
   }, [loadingFields, running, error, result, rows, columns, values, runPivot]);
 
   const addFilter = (field) => {
     if (!field) return;
-    setFilters((x) => [...x, { field, operator: 'in', values: [], value: '' }]);
-    // Warm this field immediately so the dropdown feels instant when opened.
-    void loadFilterValues(field);
+    setFilters((x) => {
+      const next = [...x, { field, operator: 'in', values: [], value: '' }];
+      setExpandedFilterIndex(next.length - 1);
+      return next;
+    });
   };
 
   const toggleFilterMultiValue = (filterIndex, optionValue) => {
@@ -1400,7 +1411,7 @@ export default function PivotReport() {
   }, []);
 
   useEffect(() => {
-    const active = new Set(filters.map((x) => x?.field).filter(Boolean));
+    const active = new Set(activeFilterFields);
     for (const key of [...filterFetchedRef.current]) {
       if (!active.has(key)) filterFetchedRef.current.delete(key);
     }
@@ -1432,10 +1443,22 @@ export default function PivotReport() {
       }
       return next;
     });
-  }, [filters]);
+  }, [activeFilterFields]);
 
   useEffect(() => {
-    const uniqueFields = [...new Set(filters.map((x) => x?.field).filter(Boolean))];
+    if (filters.length === 0) {
+      setExpandedFilterIndex(null);
+      return;
+    }
+    setExpandedFilterIndex((prev) => {
+      if (prev == null) return 0;
+      if (prev >= filters.length) return filters.length - 1;
+      return prev;
+    });
+  }, [filters.length]);
+
+  useEffect(() => {
+    const uniqueFields = activeFilterFields;
     const fromCache = {};
     const toNetwork = [];
     for (const f of uniqueFields) {
@@ -1535,7 +1558,7 @@ export default function PivotReport() {
         });
       }
     })();
-  }, [filters]);
+  }, [activeFilterFields]);
 
   const descriptorHeader = useMemo(() => (
     pivotLayout.descriptors.map((d) => {
@@ -2255,6 +2278,11 @@ export default function PivotReport() {
                 <div className="min-h-32 space-y-2 py-0.5">
                   {filters.length === 0 && <p className="text-[11px] text-[#8a8886]">Drop fields here</p>}
                   {filters.map((f, idx) => (
+                    (() => {
+                      const isExpanded = expandedFilterIndex === idx;
+                      const selectedCount = Array.isArray(f.values) ? f.values.length : 0;
+                      const totalCount = (filterOptions[f.field] || []).length;
+                      return (
                     <div
                       key={`${f.field}-${idx}`}
                       draggable
@@ -2274,13 +2302,33 @@ export default function PivotReport() {
                         </span>
                         <button
                           type="button"
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                          onClick={() => setExpandedFilterIndex((prev) => (prev === idx ? null : idx))}
+                        >
+                          {isExpanded ? 'Hide' : 'Show'}
+                        </button>
+                        <button
+                          type="button"
                           className="shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-                          onClick={() => setFilters((arr) => arr.filter((_, i) => i !== idx))}
+                          onClick={() => {
+                            setFilters((arr) => arr.filter((_, i) => i !== idx));
+                            setExpandedFilterIndex((prev) => {
+                              if (prev == null) return prev;
+                              if (prev === idx) return null;
+                              if (prev > idx) return prev - 1;
+                              return prev;
+                            });
+                          }}
                           aria-label="Remove filter"
                         >
                           <X className="h-4 w-4" aria-hidden />
                         </button>
                       </div>
+                      {!isExpanded ? (
+                        <div className="rounded-md border border-slate-200 bg-slate-50/90 px-2.5 py-2 text-[11px] text-slate-600">
+                          {selectedCount} selected {totalCount ? `of ${totalCount}` : ''}
+                        </div>
+                      ) : (
                       <div className="rounded-md border border-slate-200 bg-slate-50/90 p-2">
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
                           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Filter values</span>
@@ -2345,7 +2393,10 @@ export default function PivotReport() {
                           })}
                         </div>
                       </div>
+                      )}
                     </div>
+                      );
+                    })()
                   ))}
                 </div>
               </div>
